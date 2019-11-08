@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# Author:       sowiz
+# Description:  Start dotnet watch and open the application in a
+#               browser with automatic refresh on build.
+
+# Free resources when script terminates
+echo "Press CTRL+C at any time to quit."
+DOTNET_BUFFER=$(mktemp)
+
+function cleanup {
+    echo "Terminating ..."
+    jobs -p | xargs kill
+    pidof $(which dotnet) | xargs kill
+    rm $DOTNET_BUFFER
+}
+
+trap cleanup SIGINT SIGTERM EXIT
+
+# Config
+BROWSER=${1:-firefox}
+PROJECT=$2
+OPEN_URL="https://localhost:5001"
+REFRESH_BROWSER_WHEN_DOTNET_OUTPUTS="Application started."
+REFRESH_BROWSER_WITH_KEYSTROKE="CTRL+F5"
+
+echo "Opening $BROWSER $OPEN_URL"
+if [ "$BROWSER" = "firefox" ]; then
+    REFRESH_BROWSER_WITH_KEYSTROKE="SHIFT+CTRL+R"
+    nohup $BROWSER -silent -url $OPEN_URL > /dev/null &
+else
+    nohup $BROWSER $OPEN_URL > /dev/null &
+fi
+
+# Starting dotnet
+echo "Starting dotnet ..."
+if [ -z "$PROJECT" ]; then
+    nohup dotnet watch run > $DOTNET_BUFFER &
+else
+    nohup dotnet watch --project $PROJECT run > $DOTNET_BUFFER &
+fi
+
+# Automatically refresh browser on build
+function refresh_browser {
+    echo "Refreshing $BROWSER ..."
+
+    # Find all visible browser windows
+    BROWSER_WINDOWS="$(xdotool search --sync --all --onlyvisible --name ${BROWSER})"
+
+    # Send keystroke
+    for BW in $BROWSER_WINDOWS; do
+        xdotool key --window "$BW" "$REFRESH_BROWSER_WITH_KEYSTROKE"
+    done
+}
+
+function parse_dotnet_buffer {
+    echo "Parsing dotnet output ..."
+    TMP=$(cat $DOTNET_BUFFER | tr --delete '\0')
+    if [[ $TMP == *"$REFRESH_BROWSER_WHEN_DOTNET_OUTPUTS"* ]]; then
+        echo $REFRESH_BROWSER_WHEN_DOTNET_OUTPUTS
+        refresh_browser &
+    fi
+
+    > $DOTNET_BUFFER
+}
+
+while inotifywait -qq --event modify $DOTNET_BUFFER; do parse_dotnet_buffer; done
